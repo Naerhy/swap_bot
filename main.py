@@ -10,12 +10,9 @@ import re
 import sys
 import time
 
-# reorganize the code with better classes + inheritance 
 # check return values of some functions => check errors
 # find a way to determine gas price depending of blockchain (check x past blocks for transactions, get the median and * 2)
 # build GUI + exec => use whitelist system with custom .sol contract as a requirement to use bot
-# add loop until liquidity is added feature
-# find a way to detect if token address != ERC20 => avoid solidity errors => use try/catch exception?
 # rename title bot
 # add get price token feature
 # add color to titles and separators
@@ -100,43 +97,58 @@ class Bot:
             if web3.isConnected():
                 router = web3.eth.contract(address=self.list_routers[user_input["router"]][1], abi=Control.convert_json("abi/uniswap_router_v2.json"))
                 factory = web3.eth.contract(address=self.list_routers[user_input["router"]][2], abi=Control.convert_json("abi/uniswap_factory_v2.json"))
-                input_token = web3.eth.contract(address=user_input["input_token"], abi=Control.convert_json("abi/erc20.json"))
-                self.swap(user_input, web3, router, factory, input_token)
+                try:
+                    input_token = web3.eth.contract(address=user_input["input_token"], abi=Control.convert_json("abi/erc20.json"))
+                    buy_amount = int(user_input["buy_amount"] * 10 ** input_token.functions.decimals().call())
+                    if input_token.functions.balanceOf(self.user_address).call() >= buy_amount:
+                        if input_token.functions.allowance(self.user_address, router.address).call() >= buy_amount:
+                            self.app.thread(self.loop_swap, web3, router, factory, buy_amount, user_input)
+                        else:
+                            self.set_label_information("The router can't spend your wtokens, approve!", "label_swap_information", "red")
+                    else:
+                        self.set_label_information("You don't hold enough wtokens!", "label_swap_information", "red")
+                except:
+                    self.set_label_information("Input token isn't an ERC20 address!", "label_swap_information", "red")
             else:
                 self.set_label_information("Bot was unable to connect to the provider!", "label_swap_information", "red")
         else:
             self.set_label_information("Invalid arguments!", "label_swap_information", "red")
-    
-    def swap(self, user_input, web3, router, factory, input_token):
-        buy_amount = int(user_input["buy_amount"] * 10 ** input_token.functions.decimals().call())
-        path = [user_input["input_token"], user_input["output_token"]]
 
-        if input_token.functions.balanceOf(self.user_address).call() >= buy_amount:
-            if input_token.functions.allowance(self.user_address, router.address).call() >= buy_amount:
-                if factory.functions.getPair(path[0], path[1]).call() != "0x0000000000000000000000000000000000000000":
-                    min_received_tokens = int(router.functions.getAmountsOut(buy_amount, path).call()[1] * 100 / (user_input["slippage"] + 100))
-                    try:
-                        buy_tx = router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(buy_amount, min_received_tokens, path, self.user_address, int(time.time() + 300)).buildTransaction(self.get_user_tx(web3))
-                        signed_buy_tx = web3.eth.account.sign_transaction(buy_tx, private_key=self.private_key)
-                        tx_hash = web3.eth.send_raw_transaction(signed_buy_tx.rawTransaction)
-                        self.set_label_information("Your transaction has been sent!", "label_swap_information", "green")
-                        #self.set_label_information("Your transaction has been sent! Check its status on the explorer: " + str(tx_hash), "label_swap_information", "green")
-                    except:
-                        self.set_label_information("An error occured during contract execution!", "label_swap_information", "red")
-                else:
-                    self.set_label_information("The pair doesn't exist for this token!", "label_swap_information", "red")
-            else:
-                self.set_label_information("The router can't spend your wtokens, approve!", "label_swap_information", "red")
+    def loop_swap(self, web3, router, factory, buy_amount, user_input):
+        path = [user_input["input_token"], user_input["output_token"]]
+        i = 1
+        while factory.functions.getPair(path[0], path[1]).call() == "0x0000000000000000000000000000000000000000":
+            self.app.queueFunction(self.set_label_information, "No liquidity, looping(" + str(i) + ")...", "label_swap_information", "red")
+            i += 1
+            time.sleep(1)
+        pair = web3.eth.contract(address=factory.functions.getPair(path[0], path[1]).call(), abi=Control.convert_json("abi/pair.json"))
+        if path[0] == pair.functions.token0().call():
+            pooled_tokens = pair.functions.getReserves().call()[0]
         else:
-            self.set_label_information("You don't hold enough wtokens!", "label_swap_information", "red")
-        
+            pooled_tokens = pair.functions.getReserves().call()[1]
+        if buy_amount <= pooled_tokens / 10:
+            min_received_tokens = int(router.functions.getAmountsOut(buy_amount, path).call()[1] * 100 / (user_input["slippage"] + 100))
+            try:
+                buy_tx = router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(buy_amount, min_received_tokens, path, self.user_address, int(time.time() + 300)).buildTransaction(self.get_user_tx(web3))
+                signed_buy_tx = web3.eth.account.sign_transaction(buy_tx, private_key=self.private_key)
+                tx_hash = web3.eth.send_raw_transaction(signed_buy_tx.rawTransaction)
+                self.app.queueFunction(self.set_label_information, "Your transaction has been sent!", "label_swap_information", "green")
+                #self.set_label_information("Your transaction has been sent! Check its status on the explorer: " + str(tx_hash), "label_swap_information", "green")
+            except:
+                self.app.queueFunction(self.set_label_information, "An error occured during contract execution!", "label_swap_information", "red")
+        else:
+            self.app.queueFunction(self.set_label_information, "Slippage too high!", "label_swap_information", "red")
+            
     def prepare_approve(self, user_input):
         if Control.parse_approve(user_input):
             user_input = Control.convert_user_input(user_input)
             web3 = Web3(Web3.HTTPProvider(self.list_routers[user_input["router"]][0]))
             if web3.isConnected():
-                token = web3.eth.contract(address=user_input["token"], abi=Control.convert_json("abi/erc20.json"))
-                self.approve(web3, token, self.list_routers[user_input["router"]][1])
+                try:
+                    token = web3.eth.contract(address=user_input["token"], abi=Control.convert_json("abi/erc20.json"))
+                    self.approve(web3, token, self.list_routers[user_input["router"]][1])
+                except:
+                    self.set_label_information("Token isn't an ERC20 address!", "label_approve_information", "red")
             else:
                 self.set_label_information("Bot was unable to connect to the provider!", "label_approve_information", "red")  
         else:
