@@ -7,15 +7,15 @@ from dotenv import dotenv_values
 from appJar import gui
 import json
 import re
-import sys
 import time
 
 # check return values of some functions => check errors
 # build GUI + exec => use whitelist system with custom .sol contract as a requirement to use bot
 # add get price token feature
 # add color to titles and separators
-# get correct tx hash => use __dict__ or __class__ ?
 # split project into multiple files
+# for gas, instead use eth.fee_history method ??
+    # use another dict for ETH gas as it's using priority gas etc 
 
 class Control:
     @staticmethod
@@ -29,7 +29,7 @@ class Control:
         and Web3.isAddress(user_input["input_token"]) \
         and Web3.isAddress(user_input["output_token"]) \
         and user_input["input_token"] != user_input["output_token"] \
-        and Control.is_valid_nb(user_input["buy_amount"]) \
+        and Control.is_valid_nb(user_input["swap_amount"]) \
         and Control.is_valid_nb(user_input["slippage"]) \
         and user_input["gas"]:
             return True
@@ -54,7 +54,7 @@ class Control:
         for x in user_input:
             if x == "input_token" or x == "output_token" or x == "token":
                 user_input[x] = Web3.toChecksumAddress(user_input[x])
-            if x == "buy_amount" or x == "slippage":
+            if x == "swap_amount" or x == "slippage":
                 user_input[x] = float(user_input[x])
         return user_input
     
@@ -118,10 +118,10 @@ class Bot:
                 factory = web3.eth.contract(address=self.list_routers[user_input["router"]][2], abi=Control.convert_json("abi/uniswap_factory_v2.json"))
                 try:
                     input_token = web3.eth.contract(address=user_input["input_token"], abi=Control.convert_json("abi/erc20.json"))
-                    buy_amount = int(user_input["buy_amount"] * 10 ** input_token.functions.decimals().call())
-                    if input_token.functions.balanceOf(self.user_address).call() >= buy_amount:
-                        if input_token.functions.allowance(self.user_address, router.address).call() >= buy_amount:
-                            self.app.thread(self.loop_swap, web3, router, factory, buy_amount, user_input)
+                    swap_amount = int(user_input["swap_amount"] * 10 ** input_token.functions.decimals().call())
+                    if input_token.functions.balanceOf(self.user_address).call() >= swap_amount:
+                        if input_token.functions.allowance(self.user_address, router.address).call() >= swap_amount:
+                            self.app.thread(self.loop_swap, web3, router, factory, swap_amount, user_input)
                         else:
                             self.set_label_information("The router can't spend your wtokens, approve!", "label_swap_information", "red")
                     else:
@@ -133,7 +133,7 @@ class Bot:
         else:
             self.set_label_information("Invalid arguments!", "label_swap_information", "red")
 
-    def loop_swap(self, web3, router, factory, buy_amount, user_input):
+    def loop_swap(self, web3, router, factory, swap_amount, user_input):
         path = [user_input["input_token"], user_input["output_token"]]
         i = 1
         self.is_swapping = True
@@ -148,15 +148,14 @@ class Bot:
                 pooled_tokens = pair.functions.getReserves().call()[0]
             else:
                 pooled_tokens = pair.functions.getReserves().call()[1]
-            if buy_amount <= pooled_tokens / 10:
-                min_received_tokens = int(router.functions.getAmountsOut(buy_amount, path).call()[1] * 100 / (user_input["slippage"] + 100))
+            if swap_amount <= pooled_tokens / 10:
+                min_received_tokens = int(router.functions.getAmountsOut(swap_amount, path).call()[1] * 100 / (user_input["slippage"] + 100))
                 try:
-                    buy_tx = router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(buy_amount, min_received_tokens, path, self.user_address, int(time.time() + 300)).buildTransaction(Control.get_user_tx(web3, self.user_address))
+                    buy_tx = router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(swap_amount, min_received_tokens, path, self.user_address, int(time.time() + 300)).buildTransaction(Control.get_user_tx(web3, self.user_address))
                     buy_tx = Control.set_gas(buy_tx, user_input["gas"])
                     signed_buy_tx = web3.eth.account.sign_transaction(buy_tx, private_key=self.private_key)
-                    tx_hash = web3.eth.send_raw_transaction(signed_buy_tx.rawTransaction)
-                    self.app.queueFunction(self.set_label_information, "Your transaction has been sent!", "label_swap_information", "green")
-                    #self.set_label_information("Your transaction has been sent! Check its status on the explorer: " + str(tx_hash), "label_swap_information", "green")
+                    tx_hash = Web3.toHex(web3.eth.send_raw_transaction(signed_buy_tx.rawTransaction))
+                    #self.app.queueFunction(self.set_label_information, "Sent transaction: " + tx_hash, "label_swap_information", "green")
                 except:
                     self.app.queueFunction(self.set_label_information, "An error occured during contract execution!", "label_swap_information", "red")
             else:
@@ -205,14 +204,14 @@ class GUI(Bot):
         self.app.addLabel("label_swap_router", "Router", 1, 0, 1, 1)
         self.app.addLabel("label_swap_input_token", "Input token", 2, 0, 1, 1)
         self.app.addLabel("label_swap_output_token", "Output token", 3, 0, 1, 1)
-        self.app.addLabel("label_swap_buy_amount", "Buy amount", 4, 0, 1, 1)
+        self.app.addLabel("label_swap_swap_amount", "Swap amount", 4, 0, 1, 1)
         self.app.addLabel("label_swap_slippage", "Slippage", 5, 0, 1, 1)
         self.app.addLabel("label_swap_gas", "Gas", 6, 0, 1 ,1)
 
         self.app.addOptionBox("entry_swap_router", ["- Choose a router -", "- AVAX -", "Pangolin", "Traderjoe", "- BSC -", "Apeswap", "Pancakeswap", "- ETH -", "Sushiswap", "Uniswap", "- FTM -", "Spiritswap", "Spookyswap", "- Polygon -", "Quickswap"], 1, 1, 1, 1)
         self.app.addEntry("entry_swap_input_token", 2, 1, 1, 1)
         self.app.addEntry("entry_swap_output_token", 3, 1, 1, 1)
-        self.app.addEntry("entry_swap_buy_amount", 4, 1, 1, 1)
+        self.app.addEntry("entry_swap_swap_amount", 4, 1, 1, 1)
         self.app.addEntry("entry_swap_slippage", 5, 1, 1, 1)
         self.app.addOptionBox("entry_swap_gas", ["- Choose desired gas -", "Normal", "Fast", "Very fast"], 6, 1, 1, 1)
 
@@ -241,7 +240,7 @@ class GUI(Bot):
                 "router": self.app.getOptionBox("entry_swap_router"),
                 "input_token": self.app.getEntry("entry_swap_input_token"),
                 "output_token": self.app.getEntry("entry_swap_output_token"),
-                "buy_amount": self.app.getEntry("entry_swap_buy_amount"),
+                "swap_amount": self.app.getEntry("entry_swap_swap_amount"),
                 "slippage": self.app.getEntry("entry_swap_slippage"),
                 "gas": self.app.getOptionBox("entry_swap_gas")
             }
