@@ -1,13 +1,12 @@
 # pip install web3
-# pip install python-dotenv
 # pip3 install appjar
 
 from web3 import Web3
-from dotenv import dotenv_values
 from appJar import gui
 import json
 import re
 import time
+import sys
 
 # check return values of some functions => check errors
 # build GUI + exec => use whitelist system with custom .sol contract as a requirement to use bot
@@ -15,7 +14,9 @@ import time
 # add color to titles and separators
 # split project into multiple files
 # for gas, instead use eth.fee_history method ??
-    # use another dict for ETH gas as it's using priority gas etc 
+    # use another dict for ETH gas as it's using priority gas etc
+# add sound effects
+# add confirm button before sending transaction ?
 
 class Control:
     @staticmethod
@@ -37,7 +38,9 @@ class Control:
     
     @staticmethod
     def parse_approve(user_input):
-        if user_input["router"] and Web3.isAddress(user_input["token"]):
+        if user_input["router"] \
+        and Web3.isAddress(user_input["token"]) \
+        and user_input["gas"]:
             return True
         return False
 
@@ -68,11 +71,11 @@ class Control:
     
     @staticmethod
     def set_gas(tx, gas):
-        multiplier = 2
-        if (gas == "Fast"):
-            multiplier = 4
-        if (gas == "Very fast"):
-            multiplier = 6
+        multiplier = 1
+        if (gas == "x2"):
+            multiplier = 2
+        if (gas == "x5"):
+            multiplier = 5
         tx["gas"] = int(tx["gas"] * multiplier * 2)
         tx["gasPrice"] = int(tx["gasPrice"] * multiplier)
         return tx
@@ -156,7 +159,9 @@ class Bot:
                     signed_buy_tx = web3.eth.account.sign_transaction(buy_tx, private_key=self.private_key)
                     tx_hash = Web3.toHex(web3.eth.send_raw_transaction(signed_buy_tx.rawTransaction))
                     #self.app.queueFunction(self.set_label_information, "Sent transaction: " + tx_hash, "label_swap_information", "green")
-                except:
+                    self.app.queueFunction(self.set_label_information, "Sent transaction!", "label_swap_information", "green")
+                except Exception as e:
+                    print(e) # for debug purposes
                     self.app.queueFunction(self.set_label_information, "An error occured during contract execution!", "label_swap_information", "red")
             else:
                 self.app.queueFunction(self.set_label_information, "Slippage too high!", "label_swap_information", "red")
@@ -180,11 +185,12 @@ class Bot:
         else:
             self.set_label_information("Invalid arguments", "label_approve_information", "red")
 
-    def approve(self, web3, token, router):
+    def approve(self, web3, token, router, gas):
         try:
-            approve_tx = token.functions.approve(router, 2 ** 256 - 1).buildTransaction({"from": self.user_address, "nonce": web3.eth.getTransactionCount(self.user_address)})
-            signed_swap_tx = web3.eth.account.sign_transaction(approve_tx, private_key=self.private_key)
-            tx_hash = web3.eth.send_raw_transaction(signed_swap_tx.rawTransaction)
+            approve_tx = token.functions.approve(router, 2 ** 256 - 1).buildTransaction(Control.get_user_tx(web3, self.user_address))
+            approve_tx = Control.set_gas(approve_tx, gas)
+            signed_approve_tx = web3.eth.account.sign_transaction(approve_tx, private_key=self.private_key)
+            tx_hash = Web3.toHex(web3.eth.send_raw_transaction(signed_swap_tx.rawTransaction))
             self.set_label_information("Your transaction has been sent!", "label_approve_information", "green")
         except:
             self.set_label_information("An error occured during contract execution!", "label_approve_information", "red")
@@ -213,7 +219,7 @@ class GUI(Bot):
         self.app.addEntry("entry_swap_output_token", 3, 1, 1, 1)
         self.app.addEntry("entry_swap_swap_amount", 4, 1, 1, 1)
         self.app.addEntry("entry_swap_slippage", 5, 1, 1, 1)
-        self.app.addOptionBox("entry_swap_gas", ["- Choose desired gas -", "Normal", "Fast", "Very fast"], 6, 1, 1, 1)
+        self.app.addOptionBox("entry_swap_gas", ["- Choose desired gas -", "Normal", "x2", "x5"], 6, 1, 1, 1)
 
         self.app.addEmptyLabel("label_swap_information", 7, 0, 2, 1)
 
@@ -226,13 +232,15 @@ class GUI(Bot):
 
         self.app.addLabel("label_approve_router", "Router", 11, 0, 1, 1)
         self.app.addLabel("label_approve_token", "Token", 12, 0, 1, 1)
+        self.app.addLabel("label_approve_gas", "Gas", 13, 0, 1 ,1)
 
         self.app.addOptionBox("entry_approve_router", ["- Choose a router -", "- AVAX -", "Pangolin", "Traderjoe", "- BSC -", "Apeswap", "Pancakeswap", "- ETH -", "Sushiswap", "Uniswap", "- FTM -", "Spiritswap", "Spookyswap", "- Polygon -", "Quickswap"], 11, 1, 1, 1)
         self.app.addEntry("entry_approve_token", 12, 1, 1, 1)
+        self.app.addOptionBox("entry_approve_gas", ["- Choose desired gas -", "Normal", "x2", "x5"], 13, 1, 1, 1)
 
-        self.app.addEmptyLabel("label_approve_information", 13, 0, 2, 1)
+        self.app.addEmptyLabel("label_approve_information", 14, 0, 2, 1)
 
-        self.app.addButtons(["Approve"], self.press_button, 14, 0, 2, 1)
+        self.app.addButtons(["Approve"], self.press_button, 15, 0, 2, 1)
     
     def press_button(self, button):
         if button == "Swap":
@@ -248,7 +256,8 @@ class GUI(Bot):
         if button == "Approve":
             user_input = {
                 "router": self.app.getOptionBox("entry_approve_router"),
-                "token": self.app.getEntry("entry_approve_token")
+                "token": self.app.getEntry("entry_approve_token"),
+                "gas": self.app.getOptionBox("entry_approve_gas")
             }
             self.prepare_approve(user_input)
         if button == "Cancel":
@@ -259,9 +268,17 @@ class GUI(Bot):
         self.app.setLabel(label_id, message) 
 
 def main():
-    env_values = dotenv_values(".env")
-    program = GUI(env_values["USER_ADDRESS"], env_values["PRIVATE_KEY"])
-    program.app.go()
+    try:
+        user_file = open("user_info.txt", "r")
+        user_address = user_file.readline().rstrip("\n")
+        private_key = user_file.readline().rstrip("\n")
+        user_file.close()
+        if user_address and private_key:
+            # parse user information
+            program = GUI(user_address, private_key)
+            program.app.go()
+    except:
+        sys.exit("File error!")
 
 if __name__ == "__main__":
     main()
