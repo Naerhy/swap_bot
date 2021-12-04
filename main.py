@@ -17,6 +17,7 @@ import sys
     # use another dict for ETH gas as it's using priority gas etc
 # add sound effects
 # add confirm button before sending transaction ?
+# add event window with past events displayed on left or right?
 
 class Control:
     @staticmethod
@@ -72,12 +73,12 @@ class Control:
     @staticmethod
     def set_gas(tx, gas):
         multiplier = 1
-        if (gas == "x2"):
+        if gas == "x2":
             multiplier = 2
-        if (gas == "x5"):
+        if gas == "x5":
             multiplier = 5
-        tx["gas"] = int(tx["gas"] * multiplier * 2)
-        tx["gasPrice"] = int(tx["gasPrice"] * multiplier)
+        tx["gas"] = tx["gas"] * multiplier * 2
+        tx["gasPrice"] = tx["gasPrice"] * multiplier
         return tx
 
 class Bot:
@@ -151,20 +152,28 @@ class Bot:
                 pooled_tokens = pair.functions.getReserves().call()[0]
             else:
                 pooled_tokens = pair.functions.getReserves().call()[1]
-            if swap_amount <= pooled_tokens / 10:
-                min_received_tokens = int(router.functions.getAmountsOut(swap_amount, path).call()[1] * 100 / (user_input["slippage"] + 100))
-                try:
-                    buy_tx = router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(swap_amount, min_received_tokens, path, self.user_address, int(time.time() + 300)).buildTransaction(Control.get_user_tx(web3, self.user_address))
-                    buy_tx = Control.set_gas(buy_tx, user_input["gas"])
-                    signed_buy_tx = web3.eth.account.sign_transaction(buy_tx, private_key=self.private_key)
-                    tx_hash = Web3.toHex(web3.eth.send_raw_transaction(signed_buy_tx.rawTransaction))
-                    #self.app.queueFunction(self.set_label_information, "Sent transaction: " + tx_hash, "label_swap_information", "green")
-                    self.app.queueFunction(self.set_label_information, "Sent transaction!", "label_swap_information", "green")
-                except Exception as e:
-                    print(e) # for debug purposes
-                    self.app.queueFunction(self.set_label_information, "An error occured during contract execution!", "label_swap_information", "red")
-            else:
-                self.app.queueFunction(self.set_label_information, "Slippage too high!", "label_swap_information", "red")
+            while True:
+                if path[0] == pair.functions.token0().call():
+                    pooled_tokens = pair.functions.getReserves().call()[0]
+                else:
+                    pooled_tokens = pair.functions.getReserves().call()[1]
+                if swap_amount <= pooled_tokens / 10:
+                    break
+                self.app.queueFunction(self.set_label_information, "Slippage too high, looping...", "label_swap_information", "red")
+                time.sleep(1)
+            min_received_tokens = int(router.functions.getAmountsOut(swap_amount, path).call()[1] * 100 / (user_input["slippage"] + 100))
+            try:
+                buy_tx = router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(swap_amount, min_received_tokens, path, self.user_address, int(time.time() + 300)).buildTransaction(Control.get_user_tx(web3, self.user_address))
+                buy_tx = Control.set_gas(buy_tx, user_input["gas"])
+                signed_buy_tx = web3.eth.account.sign_transaction(buy_tx, private_key=self.private_key)
+                tx_hash = Web3.toHex(web3.eth.send_raw_transaction(signed_buy_tx.rawTransaction))
+                #self.app.queueFunction(self.set_label_information, "Sent transaction: " + tx_hash, "label_swap_information", "green")
+                self.app.queueFunction(self.set_label_information, "Sent transaction!", "label_swap_information", "green")
+            except Exception as e:
+                print(e) # for debug purposes
+                self.app.queueFunction(self.set_label_information, "An error occured during contract execution!", "label_swap_information", "red")
+            #else:
+                #self.app.queueFunction(self.set_label_information, "Slippage too high!", "label_swap_information", "red")
         else:
             self.app.queueFunction(self.set_label_information, "Swap has been cancelled!", "label_swap_information", "red")
         self.is_swapping = False
@@ -177,8 +186,9 @@ class Bot:
             if web3.isConnected():
                 try:
                     token = web3.eth.contract(address=user_input["token"], abi=Control.convert_json("abi/erc20.json"))
-                    self.approve(web3, token, self.list_routers[user_input["router"]][1])
-                except:
+                    self.approve(web3, token, self.list_routers[user_input["router"]][1], user_input["gas"])
+                except Exception as e:
+                    print(e) # for debug purposes
                     self.set_label_information("Token isn't an ERC20 address!", "label_approve_information", "red")
             else:
                 self.set_label_information("Bot was unable to connect to the provider!", "label_approve_information", "red")  
@@ -190,9 +200,10 @@ class Bot:
             approve_tx = token.functions.approve(router, 2 ** 256 - 1).buildTransaction(Control.get_user_tx(web3, self.user_address))
             approve_tx = Control.set_gas(approve_tx, gas)
             signed_approve_tx = web3.eth.account.sign_transaction(approve_tx, private_key=self.private_key)
-            tx_hash = Web3.toHex(web3.eth.send_raw_transaction(signed_swap_tx.rawTransaction))
+            tx_hash = Web3.toHex(web3.eth.send_raw_transaction(signed_approve_tx.rawTransaction))
             self.set_label_information("Your transaction has been sent!", "label_approve_information", "green")
-        except:
+        except Exception as e:
+            print(e) # for debug purposes
             self.set_label_information("An error occured during contract execution!", "label_approve_information", "red")
 
 class GUI(Bot):
@@ -274,7 +285,6 @@ def main():
         private_key = user_file.readline().rstrip("\n")
         user_file.close()
         if user_address and private_key:
-            # parse user information
             program = GUI(user_address, private_key)
             program.app.go()
     except:
