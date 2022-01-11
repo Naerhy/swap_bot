@@ -36,7 +36,7 @@ class Control:
         and user_input["gas"]:
             return True
         return False
-    
+
     @staticmethod
     def parse_approve(user_input):
         if user_input["router"] \
@@ -61,15 +61,16 @@ class Control:
             if x == "swap_amount" or x == "slippage":
                 user_input[x] = float(user_input[x])
         return user_input
-    
+
     @staticmethod
     def get_user_tx(web3, user_address):
         user_tx = {
+             "gasPrice": web3.eth.gas_price,
             "from": user_address,
             "nonce": web3.eth.getTransactionCount(user_address)
         }
         return user_tx
-    
+
     @staticmethod
     def set_gas(tx, gas):
         multiplier = 1
@@ -99,7 +100,8 @@ class Bot:
         "Uniswap": [providers["eth"], "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D", "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"],
         "Spiritswap": [providers["ftm"], "0x16327E3FbDaCA3bcF7E38F5Af2599D2DDc33aE52", "0xEF45d134b73241eDa7703fa787148D9C9F4950b0"],
         "Spookyswap": [providers["ftm"], "0xF491e7B69E4244ad4002BC14e878a34207E38c29", "0x152eE697f2E276fA89E96742e9bB9aB1F2E61bE3"],
-        "Quickswap": [providers["polygon"], "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff", "0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32"]
+        "Quickswap": [providers["polygon"], "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff", "0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32"],
+        "Tethys": [providers["metis"], "0x81b9FA50D5f5155Ee17817C21702C3AE4780AD09", "0x2CdFB20205701FF01689461610C9F321D1d00F80"]
         }
         return routers
 
@@ -109,7 +111,8 @@ class Bot:
         "bsc": "https://bsc-dataseed1.defibit.io",
         "eth": "https://rpc.flashbots.net",
         "ftm": "https://rpc.ftm.tools",
-        "polygon": "https://polygon-rpc.com"
+        "polygon": "https://polygon-rpc.com",
+        "metis": "https://andromeda.metis.io/?owner=1088"
         }
         return providers
 
@@ -148,10 +151,6 @@ class Bot:
             time.sleep(1)
         if self.is_swapping:
             pair = web3.eth.contract(address=factory.functions.getPair(path[0], path[1]).call(), abi=Control.convert_json("abi/pair.json"))
-            if path[0] == pair.functions.token0().call():
-                pooled_tokens = pair.functions.getReserves().call()[0]
-            else:
-                pooled_tokens = pair.functions.getReserves().call()[1]
             while True:
                 if path[0] == pair.functions.token0().call():
                     pooled_tokens = pair.functions.getReserves().call()[0]
@@ -225,8 +224,9 @@ class GUI(Bot):
         self.app.addLabel("label_swap_slippage", "Slippage", 5, 0, 1, 1)
         self.app.addLabel("label_swap_gas", "Gas", 6, 0, 1 ,1)
 
-        self.app.addOptionBox("entry_swap_router", ["- Choose a router -", "- AVAX -", "Pangolin", "Traderjoe", "- BSC -", "Apeswap", "Pancakeswap", "- ETH -", "Sushiswap", "Uniswap", "- FTM -", "Spiritswap", "Spookyswap", "- Polygon -", "Quickswap"], 1, 1, 1, 1)
+        self.app.addOptionBox("entry_swap_router", ["- Choose a router -", "- AVAX -", "Pangolin", "Traderjoe", "- BSC -", "Apeswap", "Pancakeswap", "- ETH -", "Sushiswap", "Uniswap", "- FTM -", "Spiritswap", "Spookyswap", "- Polygon -", "Quickswap", "- Metis -", "Tethys"], 1, 1, 1, 1)
         self.app.addEntry("entry_swap_input_token", 2, 1, 1, 1)
+        self.app.setEntryWidth("entry_swap_input_token", 45)
         self.app.addEntry("entry_swap_output_token", 3, 1, 1, 1)
         self.app.addEntry("entry_swap_swap_amount", 4, 1, 1, 1)
         self.app.addEntry("entry_swap_slippage", 5, 1, 1, 1)
@@ -237,7 +237,7 @@ class GUI(Bot):
         self.app.addButtons(["Swap", "Cancel"], self.press_button, 8, 0, 2, 1)
 
         self.app.addLabel("label_separator_1", "==============================", 9, 0, 2, 1)
-    
+
     def create_approve_tab(self):
         self.app.addLabel("label_approve_title", "Approve your tokens:", 10, 0, 2, 1)
 
@@ -245,7 +245,7 @@ class GUI(Bot):
         self.app.addLabel("label_approve_token", "Token", 12, 0, 1, 1)
         self.app.addLabel("label_approve_gas", "Gas", 13, 0, 1 ,1)
 
-        self.app.addOptionBox("entry_approve_router", ["- Choose a router -", "- AVAX -", "Pangolin", "Traderjoe", "- BSC -", "Apeswap", "Pancakeswap", "- ETH -", "Sushiswap", "Uniswap", "- FTM -", "Spiritswap", "Spookyswap", "- Polygon -", "Quickswap"], 11, 1, 1, 1)
+        self.app.addOptionBox("entry_approve_router", ["- Choose a router -", "- AVAX -", "Pangolin", "Traderjoe", "- BSC -", "Apeswap", "Pancakeswap", "- ETH -", "Sushiswap", "Uniswap", "- FTM -", "Spiritswap", "Spookyswap", "- Polygon -", "Quickswap", "- Metis -", "Tethys"], 11, 1, 1, 1)
         self.app.addEntry("entry_approve_token", 12, 1, 1, 1)
         self.app.addOptionBox("entry_approve_gas", ["- Choose desired gas -", "Normal", "x2", "x5"], 13, 1, 1, 1)
 
